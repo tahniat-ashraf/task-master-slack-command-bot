@@ -7,10 +7,10 @@ Task Manager Slack Command Bot is an innovative Slack bot developed using Python
 ## Features
 
 - **/do Command:**
-  - Triggered with `/do` command followed by a task name.
-  - Randomly selects a team member to do the mentioned task. Example - /do "Conduct Daily StandUp".
-  - Mention a specific member's name after `/do` to assign the task precisely. Example - /do "Conduct Daily StandUp" @Will
-  - Handles multiple member mentions by randomly picking one for equitable task distribution. Example - /do "Conduct Daily StandUp" @Will @Smith @Chris
+  - Triggered with `/do` command followed by a task name (single string).
+  - Randomly selects a team member to do the mentioned task. Example - /do conduct-daily-standup.
+  - Mention a specific member's name after `/do` to assign the task precisely. Example - /do conduct-daily-standup @Will
+  - Handles multiple member mentions by randomly picking one for equitable task distribution. Example - /do conduct-daily-standup @Will @Smith @Chris
     
 - **/git-review Command:**
   - Triggered with `/git-review` command followed by a Git Pull Request (PR) link. 
