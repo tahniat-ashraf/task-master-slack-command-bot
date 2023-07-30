@@ -23,10 +23,11 @@ client = slack.WebClient(token=os.environ['SLACK_TOKEN'])
 signing_secret = os.environ['SIGNING_SECRET']
 
 class RequestType(Enum):
+    PERFORM_TASK = "Task Request :wrench:"
     REVIEW_PULL_REQUEST = "Pull Request Review :computer:"
     INSPECT_THREAD_OR_LINK = "Inspection Request :eyes:"
 
-async def is_valid_request(request: Request):
+async def is_valid_signature(request: Request):
     timestamp = request.headers.get('X-Slack-Request-Timestamp')
     request_body = await request.body()
     slack_signature = request.headers.get('X-Slack-Signature')
@@ -42,17 +43,21 @@ async def is_valid_request(request: Request):
 
 
 # slack API for handling slack command - https://api.slack.com/interactivity/slash-commands
-@app.post('/review')
+@app.post('/do')
+async def perform_task(request: Request):
+    response = await review(request, RequestType.PERFORM_TASK )
+    return response
+@app.post('/git-review')
 async def review_git(request: Request):
-    response = await review(request,is_git=True )
+    response = await review(request, RequestType.REVIEW_PULL_REQUEST )
     return response
 @app.post('/inspect')
-async def review_generic(request : Request):
-    response = await review(request, is_git=False )
+async def inspect(request : Request):
+    response = await review(request, RequestType.INSPECT_THREAD_OR_LINK )
     return response
 
-async def review(request, is_git):
-    if not await is_valid_request(request):
+async def review(request, request_type):
+    if not await is_valid_signature(request):
         response_data = {'response_type': 'ephermal', 'text': ':no_entry_sign: Error (403_invalid_request) - An error has occurred. Please contact Admin.'}
         return response_data
     form_data = await request.form()
@@ -61,7 +66,6 @@ async def review(request, is_git):
     channel_id = form_data.get('channel_id')
     command = form_data.get('command')
     slack_message = form_data.get('text').split()
-    link = slack_message[0]
     if len(slack_message) == 1 or len(slack_message) > 2:
         is_assignee_random = True
     elif len(slack_message) == 2:
@@ -70,29 +74,35 @@ async def review(request, is_git):
         response_data = { 'response_type' : 'ephemeral', 'text' : ':no_entry_sign: Error - Invalid Slack Command. Please check /help to see details.' }
         return response_data
 
-    print(f"command : {command}, slack_message : {slack_message}, initiator {initiator}, channel_id {channel_id}, link {link}, response url {response_url}")
-    if is_valid_url(link, is_git=is_git):
-        asyncio.ensure_future(post_to_slack(slack_message= slack_message, link=link, channel_id= channel_id, initiator= initiator, response_url=response_url, is_git=is_git, is_assignee_random = is_assignee_random))  # Run the async function in the background
+    # print(f"command : {command}, slack_message : {slack_message}, initiator {initiator}, channel_id {channel_id}, link {link}, response url {response_url}")
+    if request_type == RequestType.PERFORM_TASK:
+        task = slack_message[0]
+        asyncio.ensure_future(post_to_slack(slack_message= slack_message, task=task, link=None, channel_id= channel_id, initiator= initiator, response_url=response_url, request_type=request_type, is_assignee_random = is_assignee_random))  # Run the async function in the background
         response_data = { 'response_type' : 'ephemeral', 'text' : f'Your command ({command}) has been received. Please wait for the results :hourglass:' }
         return response_data
     else:
-        response_data = { 'response_type' : 'ephemeral', 'text' : ':no_entry_sign: Error - Invalid Github PR link. Please put valid Url.' }
-        return response_data
+        # request_type==RequestType.REVIEW_PULL_REQUEST OR request_type==RequestType.INSPECT_THREAD_OR_LINK
+        link = slack_message[0]
+        if is_valid_url(link, request_type):
+            asyncio.ensure_future(post_to_slack(slack_message= slack_message, task=None, link=link, channel_id= channel_id, initiator= initiator, response_url=response_url, request_type=request_type, is_assignee_random = is_assignee_random))  # Run the async function in the background
+            response_data = { 'response_type' : 'ephemeral', 'text' : f'Your command ({command}) has been received. Please wait for the results :hourglass:' }
+            return response_data
+        else:
+            response_data = { 'response_type' : 'ephemeral', 'text' : ':no_entry_sign: Error - Invalid Github PR link. Please put valid Url.' }
+            return response_data
 
-async def post_to_slack(slack_message, link, channel_id, initiator, response_url, is_git, is_assignee_random):
-    if is_git:
-        type = RequestType.REVIEW_PULL_REQUEST
-    else:
-        type = RequestType.INSPECT_THREAD_OR_LINK
+
+async def post_to_slack(slack_message, task, link, channel_id, initiator, response_url, request_type, is_assignee_random):
     if is_assignee_random:
         if len(slack_message) > 2:
             # multiple assignees, need to randomize
             assignee = random.choice(slack_message[1:])
             response_data = success_response(
-                type=type,
+                type=request_type,
                 initiator=initiator,
                 assignee=assignee,
                 link=link,
+                task=task,
                 is_assignee_random=True)
             requests.post(response_url, json.dumps(response_data))
         else:
@@ -110,29 +120,31 @@ async def post_to_slack(slack_message, link, channel_id, initiator, response_url
                 assignee = is_bot_or_command_user(random_member_id)
 
             response_data = success_response(
-                type= type,
+                type= request_type,
                 initiator=initiator,
                 assignee=f"<@{assignee[0]['id']}>",
                 link=link,
+                task=task,
                 is_assignee_random=True)
             requests.post(response_url, json.dumps(response_data))
     else:
         # only one assignee
         assignee = slack_message [1]
         response_data = success_response(
-            type=type,
+            type=request_type,
             initiator=initiator,
             assignee=assignee,
             link=link,
+            task=task,
             is_assignee_random=False)
         requests.post(response_url, json.dumps(response_data))
 
 
 
 
-def is_valid_url(url, is_git):
+def is_valid_url(url, request_type):
     escaped_url = extract_url(url)
-    if is_git:
+    if request_type == RequestType.REVIEW_PULL_REQUEST:
         pattern = r'^https:\/\/github\.com\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+\/pull\/[0-9]+$'
         match = re.match(pattern, escaped_url)
         return bool(match)
@@ -160,37 +172,71 @@ def is_bot_or_command_user(user_id):
             return (user, False)
     return (None, False)
 
-def success_response (type, initiator, assignee, link, is_assignee_random):
-    response_data = {
-    "response_type" : "in_channel",
-    "text" : f":computer: {assignee} was requested to take a look at {link} :eyes:.\n Request initiated by {initiator} :saluting_face:",
-    "blocks": [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*You have a new request :gift:*\n {assignee}"
-            }
-        },
-        {
-            "type": "section",
-            "fields": [
-                {
+def success_response (type, initiator, assignee, task, link, is_assignee_random):
+
+    if type == RequestType.PERFORM_TASK:
+        response_data = {
+        "response_type" : "in_channel",
+        "text" : f":computer: {assignee} was requested to take a look at {link} :eyes:.\n Request initiated by {initiator} :saluting_face:",
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
                     "type": "mrkdwn",
-                    "text": f"*Type*\n {type.value}"
-                },
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Link / Thread :rocket:*\n {link}"
-                },
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Requested By:*\n <@{initiator}>"
+                    "text": f"*You have a new request :gift:*\n {assignee}"
                 }
-            ]
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Type*\n {type.value}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Task :rocket:*\n {task}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Requested By:*\n <@{initiator}>"
+                    }
+                ]
+            }
+        ]
         }
-    ]
-    }
+    else:
+        response_data = {
+        "response_type" : "in_channel",
+        "text" : f":computer: {assignee} was requested to take a look at {link} :eyes:.\n Request initiated by {initiator} :saluting_face:",
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*You have a new request :gift:*\n {assignee}"
+                }
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Type*\n {type.value}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Link / Thread :rocket:*\n {link}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Requested By:*\n <@{initiator}>"
+                    }
+                ]
+            }
+        ]
+        }
+
 
     if is_assignee_random:
         response_data['blocks'].append({
