@@ -4,6 +4,10 @@
 
 Task Manager Slack Command Bot is an innovative Slack bot developed using Python and the FastAPI framework. It empowers your team with seamless task management, code review, and collaboration capabilities, enhancing productivity and team dynamics. The bot integrates seamlessly with Slack's API set through the Slack Python library, ensuring a smooth and efficient user experience.
 
+## Demo
+
+Link - https://vimeo.com/849908919
+
 ## Features
 
 - **/do Command:**
